@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: appvista-postgres
+    environment:
+      POSTGRES_USER: appvista
+      POSTGRES_PASSWORD: appvista123
+      POSTGRES_DB: appvista_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: appvista-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+
+  metabase:
+    image: metabase/metabase:latest
+    container_name: appvista-metabase
+    ports:
+      - "3000:3000"
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: appvista_db
+      MB_DB_PORT: 5432
+      MB_DB_USER: appvista
+      MB_DB_PASS: appvista123
+      MB_DB_HOST: postgres
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
