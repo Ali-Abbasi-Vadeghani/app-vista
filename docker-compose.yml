@@ -1,6 +1,5 @@
-version: '3.8'
-
 services:
+
   postgres:
     image: postgres:15-alpine
     container_name: appvista-postgres
@@ -12,6 +11,11 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appvista -d appvista_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
   redis:
@@ -19,8 +23,12 @@ services:
     container_name: appvista-redis
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
-
 
   metabase:
     image: metabase/metabase:latest
@@ -35,8 +43,51 @@ services:
       MB_DB_PASS: appvista123
       MB_DB_HOST: postgres
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
+
+  api:
+    build: ./api
+    container_name: appvista-api
+    environment:
+      DATABASE_URL: postgresql://appvista:appvista123@postgres:5432/appvista_db
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+crawler:
+  build: ./crawler
+  container_name: appvista-crawler
+  environment:
+    API_BASE_URL: http://api:8000
+    REDIS_URL: redis://redis:6379/0
+    CRAWL_INTERVAL_SECONDS: "3600"
+    REQUEST_DELAY_MIN_SECONDS: "2"
+    REQUEST_DELAY_MAX_SECONDS: "5"
+    # Example: PROXY_LIST: "http://user:pass@host1:port,http://user:pass@host2:port"
+    PROXY_LIST: ""
+  depends_on:
+    api:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
 
 volumes:
   postgres_data:
+
+
+
+
+
