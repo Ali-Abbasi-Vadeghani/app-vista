@@ -75,9 +75,9 @@ services:
       CRAWL_INTERVAL_SECONDS: "3600"
       REQUEST_DELAY_MIN_SECONDS: "5"
       REQUEST_DELAY_MAX_SECONDS: "10"
-      PROXY_FILE: "/app/http.txt"    
-    volumes:
-      - ./http.txt:/app/http.txt:ro  
+      PROXY_FILE: ""    
+    # volumes:
+    #   - ./http.txt:/app/http.txt:ro  
     depends_on:
       api:
         condition: service_healthy
