@@ -70,15 +70,21 @@ def publish_reviews(data: dict) -> None:
 
 
 def publish_reviews_batch(messages: list[dict]) -> None:
-    for message in messages[:100]:
-        _publish(REVIEWS_QUEUE, message)
+    if not messages:
+        return
 
-    if messages:
-        logger.info(
-            "Reviews published package=%s count=%s",
-            messages[0].get("package_name"),
-            len(messages),
-        )
+    with redis_client.pipeline(transaction=False) as pipe:
+        for data in messages:
+            message = _build_message(data)
+            payload = json.dumps(message, ensure_ascii=False, default=str)
+            pipe.rpush(REVIEWS_QUEUE, payload)
+        pipe.execute()
+
+    logger.info(
+        "Reviews published package=%s count=%s",
+        messages[0].get("package_name"),
+        len(messages),
+    )
 
 
 def get_queue_length(queue_name: str) -> int:

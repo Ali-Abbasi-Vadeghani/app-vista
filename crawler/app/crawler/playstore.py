@@ -23,7 +23,7 @@ from app.proxy_manager import get_healthy_proxies
 logger = logging.getLogger(__name__)
 
 
-MAX_REVIEWS = 100
+MAX_REVIEWS = 1000
 PLAYSTORE_LANGUAGE = "en"
 PLAYSTORE_COUNTRY = "us"
 
