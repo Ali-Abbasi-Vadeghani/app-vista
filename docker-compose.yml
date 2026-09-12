@@ -37,7 +37,7 @@ services:
       - "3000:3000"
     environment:
       MB_DB_TYPE: postgres
-      MB_DB_DBNAME: appvista_db
+      MB_DB_DBNAME: metabase_db
       MB_DB_PORT: 5432
       MB_DB_USER: appvista
       MB_DB_PASS: appvista123
@@ -66,23 +66,41 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-crawler:
-  build: ./crawler
-  container_name: appvista-crawler
-  environment:
-    API_BASE_URL: http://api:8000
-    REDIS_URL: redis://redis:6379/0
-    CRAWL_INTERVAL_SECONDS: "3600"
-    REQUEST_DELAY_MIN_SECONDS: "2"
-    REQUEST_DELAY_MAX_SECONDS: "5"
-    # Example: PROXY_LIST: "http://user:pass@host1:port,http://user:pass@host2:port"
-    PROXY_LIST: ""
-  depends_on:
-    api:
-      condition: service_healthy
-    redis:
-      condition: service_healthy
-  restart: unless-stopped
+  crawler:
+    build: ./crawler
+    container_name: appvista-crawler
+    environment:
+      API_BASE_URL: http://api:8000
+      REDIS_URL: redis://redis:6379/0
+      CRAWL_INTERVAL_SECONDS: "3600"
+      REQUEST_DELAY_MIN_SECONDS: "5"
+      REQUEST_DELAY_MAX_SECONDS: "10"
+      PROXY_FILE: "/app/http.txt"    
+    volumes:
+      - ./http.txt:/app/http.txt:ro  
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+
+  storage:
+    build: ./storage
+    container_name: appvista-storage
+    environment:
+      DATABASE_URL: postgresql://appvista:appvista123@postgres:5432/appvista_db
+      REDIS_URL: redis://redis:6379/0
+      BLOCK_TIMEOUT_SECONDS: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped  
+
+
 
 volumes:
   postgres_data:

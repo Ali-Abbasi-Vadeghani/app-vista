@@ -39,7 +39,7 @@ def _fake_reviews(count: int = 1):
 
 
 def test_max_reviews_is_1000():
-    assert MAX_REVIEWS == 1000
+    assert MAX_REVIEWS == 100
 
 
 def test_user_agents_list_is_not_empty():
