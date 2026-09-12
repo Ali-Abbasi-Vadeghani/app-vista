@@ -59,10 +59,26 @@ def _publish(queue_name: str, data: dict) -> None:
 
 def publish_stats(data: dict) -> None:
     _publish(STATS_QUEUE, data)
+    logger.info(
+        "Stats published package=%s",
+        data.get("package_name"),
+    )
 
 
 def publish_reviews(data: dict) -> None:
     _publish(REVIEWS_QUEUE, data)
+
+
+def publish_reviews_batch(messages: list[dict]) -> None:
+    for message in messages[:100]:
+        _publish(REVIEWS_QUEUE, message)
+
+    if messages:
+        logger.info(
+            "Reviews published package=%s count=%s",
+            messages[0].get("package_name"),
+            len(messages),
+        )
 
 
 def get_queue_length(queue_name: str) -> int:

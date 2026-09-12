@@ -1,13 +1,12 @@
 
+import http.client
 import logging
 import os
 import random
+import urllib.request
 from datetime import datetime, timezone
-from itertools import cycle
 from typing import Any, Callable
 
-import httpx
-import requests
 from google_play_scraper import Sort
 from google_play_scraper import app as playstore_app
 from google_play_scraper import reviews as playstore_reviews
@@ -18,30 +17,27 @@ from tenacity import (
     wait_exponential,
 )
 
+from app.proxy_manager import get_healthy_proxies
+
+
 logger = logging.getLogger(__name__)
 
 
-MAX_REVIEWS = 1000
+MAX_REVIEWS = 100
 PLAYSTORE_LANGUAGE = "en"
 PLAYSTORE_COUNTRY = "us"
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-]
+_crawler_instance: "PlayStoreCrawler | None" = None
 
 
-PROXY_LIST_STR = os.getenv("PROXY_LIST", "")
-PROXY_LIST = [p.strip() for p in PROXY_LIST_STR.split(",") if p.strip()]
-
-proxy_pool = cycle(PROXY_LIST) if PROXY_LIST else None
+def get_crawler() -> "PlayStoreCrawler":
+    global _crawler_instance
+    if _crawler_instance is None:
+        _crawler_instance = PlayStoreCrawler()
+    return _crawler_instance
 
 
 class PlayStoreCrawler:
-
-
     def __init__(
         self,
         stats_fetcher: Callable[..., dict[str, Any]] = playstore_app,
@@ -49,49 +45,87 @@ class PlayStoreCrawler:
     ):
         self.stats_fetcher = stats_fetcher
         self.reviews_fetcher = reviews_fetcher
+        self.healthy_proxies: list[str] = []
 
-    def _get_request_options(self) -> dict[str, Any]:
-        options: dict[str, Any] = {}
+        self._load_healthy_proxies()
 
-        options["headers"] = {"User-Agent": random.choice(USER_AGENTS)}
+    def _load_healthy_proxies(self) -> None:
+        proxy_file = os.getenv("PROXY_FILE", "http.txt")
 
-        if proxy_pool:
-            proxy = next(proxy_pool)
-            options["proxy"] = proxy
-            logger.debug("Using proxy: %s", proxy)
+        if not os.path.exists(proxy_file):
+            logger.info("No proxy file found at %s; running without proxies", proxy_file)
+            self.healthy_proxies = []
+            return
 
-        return options
+        self.healthy_proxies = get_healthy_proxies(proxy_file)
+
+        if not self.healthy_proxies:
+            logger.warning("No healthy proxies found; running without proxies")
+
+    def _get_random_proxy(self) -> str | None:
+        if not self.healthy_proxies:
+            return None
+        return random.choice(self.healthy_proxies)
+
+    def _install_proxy(self, proxy: str) -> None:
+        proxy_handler = urllib.request.ProxyHandler(
+            {"http": proxy, "https": proxy}
+        )
+        opener = urllib.request.build_opener(proxy_handler)
+        urllib.request.install_opener(opener)
 
     @retry(
-        retry=retry_if_exception_type(Exception),
-        wait=wait_exponential(multiplier=2, min=2, max=60),
+        retry=retry_if_exception_type(
+            (
+                http.client.IncompleteRead,
+                http.client.RemoteDisconnected,
+                ConnectionError,
+                TimeoutError,
+                OSError,
+            )
+        ),
+        wait=wait_exponential(multiplier=2, min=3, max=60),
         stop=stop_after_attempt(5),
         reraise=True,
     )
     def fetch_stats(self, package_name: str) -> dict[str, Any]:
-        request_options = self._get_request_options()
+        proxy = self._get_random_proxy()
+        if proxy:
+            logger.debug("Using proxy for stats: %s", proxy)
+            self._install_proxy(proxy)
+
         return self.stats_fetcher(
             package_name,
             lang=PLAYSTORE_LANGUAGE,
             country=PLAYSTORE_COUNTRY,
-            **request_options,
         )
 
     @retry(
-        retry=retry_if_exception_type(Exception),
-        wait=wait_exponential(multiplier=2, min=2, max=60),
+        retry=retry_if_exception_type(
+            (
+                http.client.IncompleteRead,
+                http.client.RemoteDisconnected,
+                ConnectionError,
+                TimeoutError,
+                OSError,
+            )
+        ),
+        wait=wait_exponential(multiplier=2, min=3, max=60),
         stop=stop_after_attempt(5),
         reraise=True,
     )
     def fetch_reviews(self, package_name: str) -> list[dict[str, Any]]:
-        request_options = self._get_request_options()
+        proxy = self._get_random_proxy()
+        if proxy:
+            logger.info("Using proxy for reviews: %s", proxy)
+            self._install_proxy(proxy)
+
         result = self.reviews_fetcher(
             package_name,
             lang=PLAYSTORE_LANGUAGE,
             country=PLAYSTORE_COUNTRY,
             sort=Sort.NEWEST,
             count=MAX_REVIEWS,
-            **request_options,
         )
         reviews, _ = result
         return reviews[:MAX_REVIEWS]
@@ -102,9 +136,15 @@ class PlayStoreCrawler:
         package_name: str,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         crawl_timestamp = datetime.now(timezone.utc).isoformat()
-        logger.info("Starting crawl application_id=%s package=%s", application_id, package_name)
+
+        logger.info(
+            "Starting crawl application_id=%s package=%s",
+            application_id,
+            package_name,
+        )
 
         stats = self.fetch_stats(package_name)
+
         stats_message = {
             "application_id": application_id,
             "package_name": package_name,
@@ -119,9 +159,11 @@ class PlayStoreCrawler:
                 "adSupported": stats.get("adSupported"),
             },
         }
+
         logger.info("Stats fetched package=%s", package_name)
 
         reviews = self.fetch_reviews(package_name)
+
         review_messages = [
             {
                 "application_id": application_id,
@@ -138,6 +180,11 @@ class PlayStoreCrawler:
             }
             for review in reviews
         ]
-        logger.info("Reviews fetched package=%s count=%s", package_name, len(review_messages))
+
+        logger.info(
+            "Reviews fetched package=%s count=%s",
+            package_name,
+            len(review_messages),
+        )
 
         return stats_message, review_messages
