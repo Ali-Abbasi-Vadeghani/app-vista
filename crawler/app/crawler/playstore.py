@@ -11,6 +11,7 @@ from google_play_scraper import Sort
 from google_play_scraper import app as playstore_app
 from google_play_scraper import reviews as playstore_reviews
 from tenacity import (
+    before_sleep_log,
     retry,
     retry_if_exception_type,
     stop_after_attempt,
@@ -28,6 +29,10 @@ PLAYSTORE_LANGUAGE = "en"
 PLAYSTORE_COUNTRY = "us"
 
 _crawler_instance: "PlayStoreCrawler | None" = None
+
+
+class EmptyReviewsError(RuntimeError):
+    pass
 
 
 def get_crawler() -> "PlayStoreCrawler":
@@ -86,12 +91,18 @@ class PlayStoreCrawler:
         ),
         wait=wait_exponential(multiplier=2, min=3, max=60),
         stop=stop_after_attempt(5),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
     def fetch_stats(self, package_name: str) -> dict[str, Any]:
         proxy = self._get_random_proxy()
+
         if proxy:
-            logger.debug("Using proxy for stats: %s", proxy)
+            logger.info(
+                "Using proxy for stats package=%s proxy=%s",
+                package_name,
+                proxy,
+            )
             self._install_proxy(proxy)
 
         return self.stats_fetcher(
@@ -103,6 +114,7 @@ class PlayStoreCrawler:
     @retry(
         retry=retry_if_exception_type(
             (
+                EmptyReviewsError,
                 http.client.IncompleteRead,
                 http.client.RemoteDisconnected,
                 ConnectionError,
@@ -112,12 +124,18 @@ class PlayStoreCrawler:
         ),
         wait=wait_exponential(multiplier=2, min=3, max=60),
         stop=stop_after_attempt(5),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
     def fetch_reviews(self, package_name: str) -> list[dict[str, Any]]:
         proxy = self._get_random_proxy()
+
         if proxy:
-            logger.info("Using proxy for reviews: %s", proxy)
+            logger.info(
+                "Using proxy for reviews package=%s proxy=%s",
+                package_name,
+                proxy,
+            )
             self._install_proxy(proxy)
 
         result = self.reviews_fetcher(
@@ -127,8 +145,23 @@ class PlayStoreCrawler:
             sort=Sort.NEWEST,
             count=MAX_REVIEWS,
         )
-        reviews, _ = result
-        return reviews[:MAX_REVIEWS]
+
+        reviews, continuation_token = result
+
+        if not reviews:
+            raise EmptyReviewsError(
+                f"No reviews returned for package={package_name}"
+            )
+
+        reviews = reviews[:MAX_REVIEWS]
+
+        logger.info(
+            "Reviews fetched package=%s count=%s",
+            package_name,
+            len(reviews),
+        )
+
+        return reviews
 
     def crawl_application(
         self,
