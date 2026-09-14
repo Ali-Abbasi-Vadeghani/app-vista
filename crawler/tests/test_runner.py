@@ -1,3 +1,4 @@
+
 from unittest.mock import Mock, patch
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -29,20 +30,23 @@ def _make_application(
     )
 
 
-@patch("app.crawler.runner.time.sleep")
-@patch("app.crawler.runner.publish_reviews")
+@patch("app.crawler.runner.publish_reviews_batch")
 @patch("app.crawler.runner.publish_stats")
-@patch("app.crawler.runner.PlayStoreCrawler")
+@patch("app.crawler.playstore.get_crawler")
 def test_crawl_application_publishes(
-    crawler_class_mock,
+    get_crawler_mock,
     publish_stats_mock,
-    publish_reviews_mock,
-    sleep_mock,
+    publish_reviews_batch_mock,
 ):
-    crawler_class_mock.return_value.crawl_application.return_value = (
-        {"application_id": 1},
-        [{"application_id": 1}, {"application_id": 1}],
+    crawler_instance = Mock()
+    crawler_instance.crawl_application.return_value = (
+        {"application_id": 1, "package_name": "org.telegram.messenger"},
+        [
+            {"application_id": 1, "package_name": "org.telegram.messenger"},
+            {"application_id": 1, "package_name": "org.telegram.messenger"},
+        ],
     )
+    get_crawler_mock.return_value = crawler_instance
 
     summary = crawl_application(_make_application())
 
@@ -52,21 +56,22 @@ def test_crawl_application_publishes(
     assert summary.reviews_published == 2
 
     publish_stats_mock.assert_called_once()
-    assert publish_reviews_mock.call_count == 2
-    sleep_mock.assert_not_called()
+    publish_reviews_batch_mock.assert_called_once()
+    batch_arg = publish_reviews_batch_mock.call_args[0][0]
+    assert len(batch_arg) == 2
 
 
-@patch("app.crawler.runner.publish_reviews")
+@patch("app.crawler.runner.publish_reviews_batch")
 @patch("app.crawler.runner.publish_stats")
-@patch("app.crawler.runner.PlayStoreCrawler")
+@patch("app.crawler.playstore.get_crawler")
 def test_crawl_application_skips_publish_on_failure(
-    crawler_class_mock,
+    get_crawler_mock,
     publish_stats_mock,
-    publish_reviews_mock,
+    publish_reviews_batch_mock,
 ):
-    crawler_class_mock.return_value.crawl_application.side_effect = (
-        RuntimeError("boom")
-    )
+    crawler_instance = Mock()
+    crawler_instance.crawl_application.side_effect = RuntimeError("boom")
+    get_crawler_mock.return_value = crawler_instance
 
     summary = crawl_application(_make_application())
 
@@ -75,7 +80,7 @@ def test_crawl_application_skips_publish_on_failure(
     assert summary.reviews_published == 0
 
     publish_stats_mock.assert_not_called()
-    publish_reviews_mock.assert_not_called()
+    publish_reviews_batch_mock.assert_not_called()
 
 
 @patch("app.crawler.runner.time.sleep")
@@ -116,6 +121,7 @@ def test_schedule_application_registers_job():
     try:
         application = _make_application()
 
+        runner._jobs_registered.clear()
         _schedule_application(scheduler, application)
 
         job = scheduler.get_job(
@@ -125,6 +131,31 @@ def test_schedule_application_registers_job():
         assert job is not None
         assert job.id == f"{CRAWL_JOB_PREFIX}:{application.package_name}"
     finally:
+        runner._jobs_registered.clear()
+        scheduler.shutdown(wait=False)
+
+
+def test_schedule_application_skips_if_already_registered():
+    scheduler = BackgroundScheduler()
+    scheduler.start()
+
+    try:
+        application = _make_application()
+        runner._jobs_registered.clear()
+        runner._jobs_registered.add(
+            f"{CRAWL_JOB_PREFIX}:{application.package_name}"
+        )
+
+        _schedule_application(scheduler, application)
+
+        assert (
+            scheduler.get_job(
+                f"{CRAWL_JOB_PREFIX}:{application.package_name}"
+            )
+            is None
+        )
+    finally:
+        runner._jobs_registered.clear()
         scheduler.shutdown(wait=False)
 
 
@@ -140,9 +171,12 @@ def test_remove_job_removes_job():
     )
 
     try:
+        runner._jobs_registered.add("dummy")
         _remove_job(scheduler, "dummy")
         assert scheduler.get_job("dummy") is None
+        assert "dummy" not in runner._jobs_registered
     finally:
+        runner._jobs_registered.clear()
         scheduler.shutdown(wait=False)
 
 
@@ -171,6 +205,10 @@ def test_sync_registers_only_new_apps(
         seconds=3600,
         id=f"{CRAWL_JOB_PREFIX}:org.telegram.messenger",
     )
+    runner._jobs_registered.clear()
+    runner._jobs_registered.add(
+        f"{CRAWL_JOB_PREFIX}:org.telegram.messenger"
+    )
 
     fetch_apps_mock.return_value = [
         _make_application(1, "org.telegram.messenger"),
@@ -184,6 +222,7 @@ def test_sync_registers_only_new_apps(
         scheduled_app = schedule_mock.call_args[0][1]
         assert scheduled_app.package_name == "com.whatsapp"
     finally:
+        runner._jobs_registered.clear()
         scheduler.shutdown(wait=False)
 
 
@@ -205,6 +244,12 @@ def test_sync_removes_stale_jobs(fetch_apps_mock):
         id=f"{CRAWL_JOB_PREFIX}:org.telegram.messenger",
     )
 
+    runner._jobs_registered.clear()
+    runner._jobs_registered.add(f"{CRAWL_JOB_PREFIX}:com.old.app")
+    runner._jobs_registered.add(
+        f"{CRAWL_JOB_PREFIX}:org.telegram.messenger"
+    )
+
     fetch_apps_mock.return_value = [
         _make_application(1, "org.telegram.messenger"),
     ]
@@ -220,6 +265,7 @@ def test_sync_removes_stale_jobs(fetch_apps_mock):
             is not None
         )
     finally:
+        runner._jobs_registered.clear()
         scheduler.shutdown(wait=False)
 
 
@@ -236,6 +282,11 @@ def test_sync_does_not_touch_existing_jobs(fetch_apps_mock):
     )
     original_next_run = job.next_run_time
 
+    runner._jobs_registered.clear()
+    runner._jobs_registered.add(
+        f"{CRAWL_JOB_PREFIX}:org.telegram.messenger"
+    )
+
     fetch_apps_mock.return_value = [
         _make_application(1, "org.telegram.messenger"),
     ]
@@ -248,6 +299,7 @@ def test_sync_does_not_touch_existing_jobs(fetch_apps_mock):
         )
         assert same_job.next_run_time == original_next_run
     finally:
+        runner._jobs_registered.clear()
         scheduler.shutdown(wait=False)
 
 
@@ -261,6 +313,7 @@ def test_sync_handles_api_failure(fetch_apps_mock):
     try:
         _sync_applications(scheduler)
     finally:
+        runner._jobs_registered.clear()
         scheduler.shutdown(wait=False)
 
 

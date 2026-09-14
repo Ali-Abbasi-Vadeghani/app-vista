@@ -1,13 +1,12 @@
-
-import random
 from unittest.mock import Mock, patch
 
 import pytest
 
 from app.crawler.playstore import (
     MAX_REVIEWS,
-    PROXY_LIST,
-    USER_AGENTS,
+    PLAYSTORE_COUNTRY,
+    PLAYSTORE_LANGUAGE,
+    EmptyReviewsError,
     PlayStoreCrawler,
 )
 
@@ -38,98 +37,107 @@ def _fake_reviews(count: int = 1):
     ]
 
 
-def test_max_reviews_is_1000():
-    assert MAX_REVIEWS == 100
+def test_max_reviews_constant():
+    assert MAX_REVIEWS == 1000
 
 
-def test_user_agents_list_is_not_empty():
-    assert len(USER_AGENTS) > 0
-    assert all(isinstance(ua, str) for ua in USER_AGENTS)
+def test_playstore_language_and_country():
+    assert PLAYSTORE_LANGUAGE == "en"
+    assert PLAYSTORE_COUNTRY == "us"
 
 
-def test_get_request_options_includes_user_agent():
-    crawler = PlayStoreCrawler()
+def test_crawler_initializes_with_fetchers():
+    stats_fetcher = Mock(return_value=_fake_stats())
+    reviews_fetcher = Mock(return_value=(_fake_reviews(1), None))
 
-    options = crawler._get_request_options()
+    crawler = PlayStoreCrawler(stats_fetcher, reviews_fetcher)
 
-    assert "headers" in options
-    assert "User-Agent" in options["headers"]
-    assert options["headers"]["User-Agent"] in USER_AGENTS
-
-
-def test_get_request_options_includes_proxy_when_available():
-    crawler = PlayStoreCrawler()
-
-    with patch(
-        "app.crawler.playstore.proxy_pool",
-        iter(["http://proxy1:8080", "http://proxy2:8080"]),
-    ):
-        options = crawler._get_request_options()
-
-    assert "proxy" in options
-    assert options["proxy"] in ["http://proxy1:8080", "http://proxy2:8080"]
+    assert crawler.stats_fetcher is stats_fetcher
+    assert crawler.reviews_fetcher is reviews_fetcher
 
 
-def test_get_request_options_without_proxy():
-    crawler = PlayStoreCrawler()
-
-    with patch("app.crawler.playstore.proxy_pool", None):
-        options = crawler._get_request_options()
-
-    assert "proxy" not in options
-
-
-def test_fetch_stats_passes_anti_blocking_options():
+def test_fetch_stats_calls_fetcher_with_lang_country():
     stats_fetcher = Mock(return_value=_fake_stats())
     reviews_fetcher = Mock(return_value=([], None))
 
     crawler = PlayStoreCrawler(stats_fetcher, reviews_fetcher)
+    crawler.healthy_proxies = []
 
-    with patch(
-        "app.crawler.playstore.proxy_pool",
-        iter(["http://proxy:8080"]),
-    ):
-        with patch.object(
-            random,
-            "choice",
-            return_value=USER_AGENTS[0],
-        ):
-            stats = crawler.fetch_stats("org.telegram.messenger")
+    stats = crawler.fetch_stats("org.telegram.messenger")
 
     assert stats["score"] == 4.5
-
     stats_fetcher.assert_called_once_with(
         "org.telegram.messenger",
         lang="en",
         country="us",
-        headers={"User-Agent": USER_AGENTS[0]},
-        proxy="http://proxy:8080",
     )
 
 
-def test_fetch_reviews_passes_anti_blocking_options():
+def test_fetch_stats_uses_proxy_when_available():
+    stats_fetcher = Mock(return_value=_fake_stats())
+    reviews_fetcher = Mock(return_value=([], None))
+
+    crawler = PlayStoreCrawler(stats_fetcher, reviews_fetcher)
+    crawler.healthy_proxies = ["http://proxy1:8080"]
+
+    with patch.object(
+        crawler, "_install_proxy"
+    ) as install_mock:
+        crawler.fetch_stats("org.telegram.messenger")
+
+    install_mock.assert_called_once_with("http://proxy1:8080")
+
+
+def test_fetch_stats_no_proxy_when_none_healthy():
+    stats_fetcher = Mock(return_value=_fake_stats())
+    reviews_fetcher = Mock(return_value=([], None))
+
+    crawler = PlayStoreCrawler(stats_fetcher, reviews_fetcher)
+    crawler.healthy_proxies = []
+
+    with patch.object(crawler, "_install_proxy") as install_mock:
+        crawler.fetch_stats("org.telegram.messenger")
+
+    install_mock.assert_not_called()
+
+
+def test_fetch_reviews_returns_list():
     stats_fetcher = Mock(return_value=_fake_stats())
     reviews_fetcher = Mock(return_value=(_fake_reviews(2), None))
 
     crawler = PlayStoreCrawler(stats_fetcher, reviews_fetcher)
+    crawler.healthy_proxies = []
 
-    with patch(
-        "app.crawler.playstore.proxy_pool",
-        iter(["http://proxy:8080"]),
-    ):
-        with patch.object(
-            random,
-            "choice",
-            return_value=USER_AGENTS[0],
-        ):
-            result = crawler.fetch_reviews("org.telegram.messenger")
+    result = crawler.fetch_reviews("org.telegram.messenger")
 
     assert len(result) == 2
+    assert result[0]["reviewId"] == "review-0"
+
+
+def test_fetch_reviews_passes_sort_and_count():
+    stats_fetcher = Mock(return_value=_fake_stats())
+    reviews_fetcher = Mock(return_value=(_fake_reviews(2), None))
+
+    crawler = PlayStoreCrawler(stats_fetcher, reviews_fetcher)
+    crawler.healthy_proxies = []
+
+    crawler.fetch_reviews("org.telegram.messenger")
 
     _, kwargs = reviews_fetcher.call_args
-    assert kwargs["headers"] == {"User-Agent": USER_AGENTS[0]}
-    assert kwargs["proxy"] == "http://proxy:8080"
     assert kwargs["count"] == MAX_REVIEWS
+    assert kwargs["lang"] == "en"
+    assert kwargs["country"] == "us"
+
+
+def test_fetch_reviews_raises_when_empty():
+    stats_fetcher = Mock(return_value=_fake_stats())
+    reviews_fetcher = Mock(return_value=([], None))
+
+    crawler = PlayStoreCrawler(stats_fetcher, reviews_fetcher)
+    crawler.healthy_proxies = []
+
+    with pytest.raises(EmptyReviewsError):
+        crawler.fetch_reviews("org.telegram.messenger")
 
 
 def test_fetch_reviews_limits_to_max():
@@ -137,6 +145,7 @@ def test_fetch_reviews_limits_to_max():
     reviews_fetcher = Mock(return_value=(_fake_reviews(1500), None))
 
     crawler = PlayStoreCrawler(stats_fetcher, reviews_fetcher)
+    crawler.healthy_proxies = []
 
     result = crawler.fetch_reviews("org.telegram.messenger")
 
@@ -148,6 +157,7 @@ def test_crawl_application_returns_stats_and_reviews():
     reviews_fetcher = Mock(return_value=(_fake_reviews(2), None))
 
     crawler = PlayStoreCrawler(stats_fetcher, reviews_fetcher)
+    crawler.healthy_proxies = []
 
     stats_message, review_messages = crawler.crawl_application(
         application_id=1,
@@ -164,23 +174,44 @@ def test_crawl_application_returns_stats_and_reviews():
     assert review_messages[0]["application_id"] == 1
 
 
-def test_proxy_list_parsing_from_env(monkeypatch):
-    import importlib
+def test_crawl_application_stats_message_contains_all_fields():
+    stats_fetcher = Mock(return_value=_fake_stats())
+    reviews_fetcher = Mock(return_value=(_fake_reviews(1), None))
 
-    monkeypatch.setenv(
-        "PROXY_LIST",
-        "http://p1:8080, http://p2:8080 ,http://p3:8080",
+    crawler = PlayStoreCrawler(stats_fetcher, reviews_fetcher)
+    crawler.healthy_proxies = []
+
+    stats_message, _ = crawler.crawl_application(
+        application_id=1,
+        package_name="org.telegram.messenger",
     )
 
-    import app.crawler.playstore as playstore_module
+    data = stats_message["data"]
+    assert data["minInstalls"] == 1000000
+    assert data["score"] == 4.5
+    assert data["ratings"] == 50000
+    assert data["reviews"] == 10000
+    assert data["updated"] == 1700000000
+    assert data["version"] == "1.0.0"
+    assert data["adSupported"] is True
 
-    importlib.reload(playstore_module)
 
-    assert playstore_module.PROXY_LIST == [
-        "http://p1:8080",
-        "http://p2:8080",
-        "http://p3:8080",
-    ]
+def test_get_random_proxy_returns_none_when_empty():
+    stats_fetcher = Mock(return_value=_fake_stats())
+    reviews_fetcher = Mock(return_value=([], None))
 
-    monkeypatch.delenv("PROXY_LIST", raising=False)
-    importlib.reload(playstore_module)
+    crawler = PlayStoreCrawler(stats_fetcher, reviews_fetcher)
+    crawler.healthy_proxies = []
+
+    assert crawler._get_random_proxy() is None
+
+
+def test_get_random_proxy_returns_from_list():
+    stats_fetcher = Mock(return_value=_fake_stats())
+    reviews_fetcher = Mock(return_value=([], None))
+
+    crawler = PlayStoreCrawler(stats_fetcher, reviews_fetcher)
+    crawler.healthy_proxies = ["http://p1:8080", "http://p2:8080"]
+
+    proxy = crawler._get_random_proxy()
+    assert proxy in crawler.healthy_proxies
