@@ -86,6 +86,33 @@ services:
     restart: unless-stopped
 
 
+  network-analyzer:
+    build: ./network_analyzer
+    container_name: appvista-network-analyzer
+    environment:
+      API_BASE_URL: http://api:8000
+      REDIS_URL: redis://redis:6379/0
+      ALLOWED_PACKAGES: app.pinno,ir.android.baham
+      MAX_PCAP_BYTES: "524288000"
+      LOG_LEVEL: INFO
+    ports:
+      - "8010:8010"
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8010/health')\""
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+
+
   storage:
     build: ./storage
     container_name: appvista-storage
@@ -94,6 +121,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       BLOCK_TIMEOUT_SECONDS: "1"
     depends_on:
+      api:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
