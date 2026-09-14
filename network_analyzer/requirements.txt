@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+scapy
+python-multipart
+redis
+tenacity
+httpx
+pytest
