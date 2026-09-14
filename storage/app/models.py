@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     func,
 )
+
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -172,7 +173,7 @@ class NetworkMeasurement(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
     application_id: Mapped[int] = mapped_column(
-        ForeignKey("applications.id", ondelete="CASCADE"),
+        Integer,
         nullable=False,
         index=True,
     )
