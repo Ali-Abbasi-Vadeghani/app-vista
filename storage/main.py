@@ -1,8 +1,9 @@
-from app.consumer import run_consumer
+
 from app.logging_config import setup_logging
 
-
 setup_logging()
+
+from app.consumer import run_consumer
 
 
 if __name__ == "__main__":
