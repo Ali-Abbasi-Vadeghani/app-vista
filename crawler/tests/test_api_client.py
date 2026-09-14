@@ -52,3 +52,23 @@ def test_fetch_active_applications_empty(get_mock):
     get_mock.return_value = _fake_response([])
 
     assert api_client.fetch_active_applications() == []
+
+
+@patch("app.api_client.httpx.Client.get")
+def test_fetch_active_applications_ignores_extra_fields(get_mock):
+    get_mock.return_value = _fake_response(
+        [
+            {
+                "id": 1,
+                "name": "Telegram",
+                "package_name": "org.telegram.messenger",
+                "category": "Social",
+                "is_active": True,
+                "created_at": "2024-01-01T00:00:00+00:00",
+                "updated_at": "2024-01-01T00:00:00+00:00",
+            }
+        ]
+    )
+
+    apps = api_client.fetch_active_applications()
+    assert len(apps) == 1
