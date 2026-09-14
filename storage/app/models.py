@@ -9,6 +9,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    ForeignKey,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -163,3 +164,54 @@ class AppReview(Base):
             name="uq_app_reviews_package_review",
         ),
     )
+
+
+class NetworkMeasurement(Base):
+    __tablename__ = "network_measurements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    application_id: Mapped[int] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    package_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    scenario: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+
+    pcap_filename: Mapped[str] = mapped_column(String(512), nullable=False)
+    pcap_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+    captured_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    packet_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    tcp_packet_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    tcp_flow_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    handshake_rtt_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    retransmission_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    zero_window_event_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    tcp_reset_drops: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    total_transferred_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    total_payload_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    overhead_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "application_id",
+            "scenario",
+            "pcap_sha256",
+            name="uq_network_measurement_capture",
+        ),
+    )    
