@@ -75,7 +75,7 @@ cmd_test() {
     preflight
     ensure_env
 
-    local services=("api" "crawler" "storage" "network-analyzer" "metabase")
+    local services=("api" "crawler" "storage" "network-analyzer" "metabase-bootstrap")
     local failed=()
 
     for service in "${services[@]}"; do
