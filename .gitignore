@@ -17,7 +17,8 @@ htmlcov/
 
 # Environment
 .env
-.env.local
+.env.*
+!.env.example
 
 # OS
 .DS_Store
@@ -30,3 +31,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Project-specific
+backups/

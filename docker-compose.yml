@@ -4,15 +4,15 @@ services:
     image: postgres:15-alpine
     container_name: appvista-postgres
     environment:
-      POSTGRES_USER: appvista
-      POSTGRES_PASSWORD: appvista123
-      POSTGRES_DB: appvista_db
+      POSTGRES_USER: ${PG_USER:-appvista}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-appvista123}
+      POSTGRES_DB: ${APP_DB:-appvista_db}
     ports:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U appvista -d appvista_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-appvista} -d ${APP_DB:-appvista_db}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -30,28 +30,86 @@ services:
       retries: 10
     restart: unless-stopped
 
+  metabase-db-init:
+    image: postgres:15-alpine
+    container_name: appvista-metabase-db-init
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: ${PG_USER:-appvista}
+      PGPASSWORD: ${PG_PASSWORD:-appvista123}
+      APP_DB: ${APP_DB:-appvista_db}
+      METABASE_DB: ${METABASE_DB:-metabase_db}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until pg_isready -h "$$PGHOST" -p "$$PGPORT" -U "$$PGUSER" -d "$$APP_DB"; do sleep 2; done
+        DB_EXISTS=$$(psql -h "$$PGHOST" -U "$$PGUSER" -d "$$APP_DB" -tAc "SELECT 1 FROM pg_database WHERE datname='$$METABASE_DB'")
+        if [ "$$DB_EXISTS" != "1" ]; then
+          psql -h "$$PGHOST" -U "$$PGUSER" -d "$$APP_DB" -c "CREATE DATABASE $$METABASE_DB"
+        fi
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   metabase:
-    image: metabase/metabase:latest
+    image: metabase/metabase:v0.52.5
     container_name: appvista-metabase
     ports:
       - "3000:3000"
     environment:
       MB_DB_TYPE: postgres
-      MB_DB_DBNAME: metabase_db
+      MB_DB_DBNAME: ${METABASE_DB:-metabase_db}
       MB_DB_PORT: 5432
-      MB_DB_USER: appvista
-      MB_DB_PASS: appvista123
+      MB_DB_USER: ${PG_USER:-appvista}
+      MB_DB_PASS: ${PG_PASSWORD:-appvista123}
       MB_DB_HOST: postgres
+      JAVA_TIMEZONE: Asia/Tehran
+      MB_SITE_NAME: ${MB_SITE_NAME:-AppVista Analytics}
+    depends_on:
+      metabase-db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail -I http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
+  metabase-bootstrap:
+    build:
+      context: ./metabase
+      dockerfile: Dockerfile
+    container_name: appvista-metabase-bootstrap
+    environment:
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_USER: ${PG_USER:-appvista}
+      PG_PASSWORD: ${PG_PASSWORD:-appvista123}
+      APP_DB: ${APP_DB:-appvista_db}
+      METABASE_DB: ${METABASE_DB:-metabase_db}
+      MB_URL: http://metabase:3000
+      MB_ADMIN_EMAIL: ${MB_ADMIN_EMAIL:-admin@appvista.local}
+      MB_ADMIN_PASSWORD: ${MB_ADMIN_PASSWORD:-ChangeMe123!}
+      MB_ADMIN_FIRST_NAME: ${MB_ADMIN_FIRST_NAME:-AppVista}
+      MB_ADMIN_LAST_NAME: ${MB_ADMIN_LAST_NAME:-Admin}
+      MB_SITE_NAME: ${MB_SITE_NAME:-AppVista Analytics}
+      MB_SOURCE_NAME: AppVista PostgreSQL
+      MB_DASHBOARD_NAME: AppVista Analytics
     depends_on:
       postgres:
         condition: service_healthy
-    restart: unless-stopped
+      metabase:
+        condition: service_healthy
+    restart: "no"
 
   api:
     build: ./api
     container_name: appvista-api
     environment:
-      DATABASE_URL: postgresql://appvista:appvista123@postgres:5432/appvista_db
+      DATABASE_URL: postgresql://${PG_USER:-appvista}:${PG_PASSWORD:-appvista123}@postgres:5432/${APP_DB:-appvista_db}
     ports:
       - "8000:8000"
     healthcheck:
@@ -75,9 +133,7 @@ services:
       CRAWL_INTERVAL_SECONDS: "3600"
       REQUEST_DELAY_MIN_SECONDS: "5"
       REQUEST_DELAY_MAX_SECONDS: "10"
-      PROXY_FILE: ""    
-    # volumes:
-    #   - ./http.txt:/app/http.txt:ro  
+      PROXY_FILE: ""
     depends_on:
       api:
         condition: service_healthy
@@ -85,6 +141,30 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  network-analyzer:
+    build: ./network_analyzer
+    container_name: appvista-network-analyzer
+    environment:
+      API_BASE_URL: http://api:8000
+      REDIS_URL: redis://redis:6379/0
+      ALLOWED_PACKAGES: app.pinno,ir.android.baham
+      MAX_PCAP_BYTES: "524288000"
+      LOG_LEVEL: INFO
+    ports:
+      - "8010:8010"
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8010/health')\""
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   network-analyzer:
     build: ./network_analyzer
@@ -117,7 +197,7 @@ services:
     build: ./storage
     container_name: appvista-storage
     environment:
-      DATABASE_URL: postgresql://appvista:appvista123@postgres:5432/appvista_db
+      DATABASE_URL: postgresql://${PG_USER:-appvista}:${PG_PASSWORD:-appvista123}@postgres:5432/${APP_DB:-appvista_db}
       REDIS_URL: redis://redis:6379/0
       BLOCK_TIMEOUT_SECONDS: "1"
     depends_on:
@@ -127,14 +207,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    restart: unless-stopped  
-
-
+    restart: unless-stopped
 
 volumes:
   postgres_data:
-
-
-
-
-
