@@ -71,6 +71,32 @@ cmd_logs() {
     docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs -f --tail=100
 }
 
+cmd_test() {
+    preflight
+    ensure_env
+
+    local services=("api" "crawler" "storage" "network-analyzer" "metabase")
+    local failed=()
+
+    for service in "${services[@]}"; do
+        log "Testing service: $service"
+        if docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" \
+            run --rm --no-deps --entrypoint "python -m pytest" "$service" -v; then
+            log "$service: passed"
+        else
+            error "$service: failed"
+            failed+=("$service")
+        fi
+        echo
+    done
+
+    if [ ${#failed[@]} -eq 0 ]; then
+        log "All service tests passed."
+    else
+        die "Failed services: ${failed[*]}"
+    fi
+}
+
 cmd_urls() {
     cat <<'EOF'
 
@@ -87,6 +113,7 @@ cmd_urls() {
     bash setup.sh --status   # show service status
     bash setup.sh --logs     # follow logs
     bash setup.sh --down     # stop (keep data)
+    bash setup.sh --test     # run all service tests
 
   This script never deletes data volumes.
 
@@ -98,6 +125,7 @@ case "${1:-}" in
     --down|down)      cmd_down ;;
     --status|status)  cmd_status ;;
     --logs|logs)      cmd_logs ;;
+    --test|test)      cmd_test ;;
     -h|--help|help)
         cat <<EOF
 AppVista setup script
@@ -110,6 +138,7 @@ Commands:
   --down            Stop all services, keep volumes
   --status          Show current service status
   --logs            Follow service logs
+  --test            Run unit tests for all services
   --help            Show this help
 EOF
         ;;
