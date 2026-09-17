@@ -172,7 +172,7 @@ class MetabaseClient:
             None,
         )
 
-        payload = {
+        query_payload = {
             "name": question["name"],
             "description": question.get("description", ""),
             "dataset_query": {
@@ -183,16 +183,22 @@ class MetabaseClient:
                 },
                 "database": database_id,
             },
+        }
+
+        viz_payload = {
             "display": question.get("display", "table"),
             "visualization_settings": question.get("visualization_settings", {}),
         }
 
         if card:
-            self._request("PUT", f"/api/card/{card['id']}", json=payload)
+            self._request("PUT", f"/api/card/{card['id']}", json=query_payload)
+            self._request("PUT", f"/api/card/{card['id']}", json=viz_payload)
+
             logger.info("Updated question '%s' (id=%s)", question["name"], card["id"])
             return card["id"]
 
-        response = self._request("POST", "/api/card", json=payload)
+        create_payload = {**query_payload, **viz_payload}
+        response = self._request("POST", "/api/card", json=create_payload)
         card_id = response.json()["id"]
         logger.info("Created question '%s' (id=%s)", question["name"], card_id)
         return card_id
