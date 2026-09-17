@@ -68,6 +68,8 @@ services:
       JAVA_TIMEZONE: Asia/Tehran
       MB_SITE_NAME: ${MB_SITE_NAME:-AppVista Analytics}
     depends_on:
+      postgres:
+        condition: service_healthy 
       metabase-db-init:
         condition: service_completed_successfully
     healthcheck:
