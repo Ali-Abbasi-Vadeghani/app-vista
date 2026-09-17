@@ -1,3 +1,4 @@
+# metabase/app/questions.py
 
 QUESTIONS = [
     {
@@ -135,12 +136,21 @@ ORDER BY avg_network_risk_index DESC NULLS LAST;""",
         "name": "Apps with rating review divergence",
         "description": "Compare Play Store aggregate score with the last 30 days review score and label the divergence.",
         "dashboard": "primary",
-        "display": "table",
+        "display": "bar",
         "visualization_settings": {
             "table.pivot_column": "status",
             "table.cell_column": "latest_score",
+            "graph.dimensions": ["name", "status"],
+            "graph.metrics": ["gap"],
+            "graph.series_order_dimension": None,
+            "graph.series_order": None,
             "column_settings": {
                 "[\"name\",\"gap\"]": {"show_mini_bar": True}
+            },
+            "series_settings": {
+                "Play Store overrates": {"color": "#51528D"},
+                "In sync": {"color": "#88BF4D"},
+                "Reviews more positive": {"color": "#E75454"},
             },
         },
         "sql": """SELECT
@@ -162,41 +172,42 @@ ORDER BY ABS(latest_score - recent_review_score) DESC;""",
     },
     {
         "name": "Popularity vs quality matrix",
-        "description": "Classify apps by install count (popularity) and latest score (quality) to reveal apps that are installed a lot but rated poorly.",
+        "description": "Scatter plot of apps by install count (popularity) and latest score (quality), with bubble size showing review count.",
         "dashboard": "primary",
-        "display": "table",
-        "visualization_settings": {},
-        "sql": """WITH ranked AS (
-    SELECT
-        name,
-        category,
-        min_installs,
-        latest_score,
-        CASE
-            WHEN min_installs >= 1000000000 THEN 'High Popularity'
-            WHEN min_installs >= 10000000  THEN 'Medium Popularity'
-            ELSE 'Low Popularity'
-        END AS popularity_band,
-        CASE
-            WHEN latest_score >= 4.5 THEN 'High Quality'
-            WHEN latest_score >= 3.5 THEN 'Medium Quality'
-            WHEN latest_score IS NOT NULL THEN 'Low Quality'
-            ELSE 'Unknown'
-        END AS quality_band
-    FROM vw_app_business_snapshot
-    WHERE min_installs IS NOT NULL
-      AND latest_score IS NOT NULL
-)
-SELECT
+        "display": "scatter",
+        "visualization_settings": {
+            "graph.dimensions": ["min_installs", "category"],
+            "graph.metrics": ["latest_score"],
+            "scatter.bubble": "reviews",
+            "graph.x_axis.scale": "histogram",
+            "graph.series_order_dimension": None,
+            "graph.series_order": None,
+        },
+        "sql": """SELECT
     name,
     category,
     min_installs,
     latest_score,
-    popularity_band,
-    quality_band,
-    (popularity_band = 'High Popularity' AND quality_band = 'Low Quality') AS popularity_quality_mismatch
-FROM ranked
-ORDER BY popularity_quality_mismatch DESC, min_installs DESC;""",
+    reviews,
+    CASE
+        WHEN min_installs >= 1000000000 THEN 'High Popularity'
+        WHEN min_installs >= 10000000  THEN 'Medium Popularity'
+        ELSE 'Low Popularity'
+    END AS popularity_band,
+    CASE
+        WHEN latest_score >= 4.5 THEN 'High Quality'
+        WHEN latest_score >= 3.5 THEN 'Medium Quality'
+        WHEN latest_score IS NOT NULL THEN 'Low Quality'
+        ELSE 'Unknown'
+    END AS quality_band,
+    CASE
+        WHEN min_installs >= 1000000000 AND latest_score < 3.5 THEN TRUE
+        ELSE FALSE
+    END AS is_mismatch
+FROM vw_app_business_snapshot
+WHERE min_installs IS NOT NULL
+  AND latest_score IS NOT NULL
+ORDER BY min_installs DESC;""",
     },
     {
         "name": "Average score of last 100 reviews",
@@ -213,17 +224,17 @@ ORDER BY popularity_quality_mismatch DESC, min_installs DESC;""",
         "sql": """WITH ranked_reviews AS (
     SELECT
         name,
-        score,
+        review_score,
         ROW_NUMBER() OVER (
             PARTITION BY name
             ORDER BY review_at DESC NULLS LAST
         ) AS rn
     FROM vw_review_score_trend
-    WHERE score IS NOT NULL
+    WHERE review_score IS NOT NULL
 )
 SELECT
     name,
-    ROUND(AVG(score)::numeric, 2) AS avg_last_100_score,
+    ROUND(AVG(review_score)::numeric, 2) AS avg_last_100_score,
     COUNT(*) AS reviews_used
 FROM ranked_reviews
 WHERE rn <= 100
@@ -232,7 +243,7 @@ ORDER BY avg_last_100_score DESC NULLS LAST;""",
     },
     {
         "name": "Review volume per application (3-hour buckets)",
-        "description": "Number of reviews written by users in 3-hour buckets over time, per application.",
+        "description": "Number of reviews written by users in 3-hour buckets over time, filtered by application.",
         "dashboard": "primary",
         "display": "line",
         "visualization_settings": {
@@ -246,7 +257,8 @@ ORDER BY avg_last_100_score DESC NULLS LAST;""",
     COUNT(*) AS review_count
 FROM vw_review_score_trend
 WHERE review_at IS NOT NULL
+  AND {{app_filter}}
 GROUP BY name, review_bucket
-ORDER BY review_bucket, name;""",
+ORDER BY review_bucket;""",
     },
 ]

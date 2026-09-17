@@ -92,7 +92,7 @@ services:
       METABASE_DB: ${METABASE_DB:-metabase_db}
       MB_URL: http://metabase:3000
       MB_ADMIN_EMAIL: ${MB_ADMIN_EMAIL:-admin@appvista.local}
-      MB_ADMIN_PASSWORD: ${MB_ADMIN_PASSWORD:-ChangeMe123!}
+      MB_ADMIN_PASSWORD: ${MB_ADMIN_PASSWORD:-AppVista-Str0ng-2026!}
       MB_ADMIN_FIRST_NAME: ${MB_ADMIN_FIRST_NAME:-AppVista}
       MB_ADMIN_LAST_NAME: ${MB_ADMIN_LAST_NAME:-Admin}
       MB_SITE_NAME: ${MB_SITE_NAME:-AppVista Analytics}
