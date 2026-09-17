@@ -1,10 +1,10 @@
+#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
 ENV_FILE=".env"
-ENV_EXAMPLE=".env.example"
 COMPOSE_FILE="docker-compose.yml"
 
 log()   { printf "\033[1;34m[appvista]\033[0m %s\n" "$*"; }
@@ -14,6 +14,18 @@ die()   { error "$*"; exit 1; }
 
 require_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
+}
+
+COMPOSE_CMD=()
+
+build_compose_cmd() {
+    COMPOSE_CMD=(docker compose)
+    if [ -f "$ENV_FILE" ]; then
+        COMPOSE_CMD+=(--env-file "$ENV_FILE")
+    else
+        warn "$ENV_FILE not found; using compose defaults."
+    fi
+    COMPOSE_CMD+=(-f "$COMPOSE_FILE")
 }
 
 preflight() {
@@ -34,54 +46,52 @@ preflight() {
 }
 
 ensure_env() {
-    if [ ! -f "$ENV_FILE" ]; then
-        if [ -f "$ENV_EXAMPLE" ]; then
-            log "Creating $ENV_FILE from $ENV_EXAMPLE"
-            cp "$ENV_EXAMPLE" "$ENV_FILE"
-            warn "Review $ENV_FILE and change default credentials."
-        else
-            warn "$ENV_FILE not found; using compose defaults."
-        fi
-    else
+    if [ -f "$ENV_FILE" ]; then
         log "$ENV_FILE already present."
+    else
+        warn "$ENV_FILE not found; continuing with compose defaults."
     fi
 }
 
 cmd_up() {
     preflight
     ensure_env
+    build_compose_cmd
     log "Building and starting all services..."
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build
+    "${COMPOSE_CMD[@]}" up -d --build
     cmd_status
     cmd_urls
 }
 
 cmd_down() {
+    build_compose_cmd
     log "Stopping all services (data volumes are preserved)..."
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down
+    "${COMPOSE_CMD[@]}" down
     log "All services stopped."
 }
 
 cmd_status() {
+    build_compose_cmd
     log "Service status:"
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
+    "${COMPOSE_CMD[@]}" ps
 }
 
 cmd_logs() {
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs -f --tail=100
+    build_compose_cmd
+    "${COMPOSE_CMD[@]}" logs -f --tail=100
 }
 
 cmd_test() {
     preflight
     ensure_env
+    build_compose_cmd
 
     local services=("api" "crawler" "storage" "network-analyzer" "metabase-bootstrap")
     local failed=()
 
     for service in "${services[@]}"; do
         log "Testing service: $service"
-        if docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" \
-            run --rm --no-deps --entrypoint "python -m pytest" "$service" -v; then
+        if "${COMPOSE_CMD[@]}" run --rm --no-deps --entrypoint "python -m pytest" "$service" -v; then
             log "$service: passed"
         else
             error "$service: failed"

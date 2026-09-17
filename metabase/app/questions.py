@@ -4,30 +4,66 @@ QUESTIONS = [
         "name": "Score trend by application",
         "description": "Overall Play Store score per crawl observation.",
         "dashboard": "primary",
+        "display": "line",
+        "visualization_settings": {
+            "graph.dimensions": ["crawl_timestamp", "name"],
+            "graph.metrics": ["overall_score"],
+            "graph.y_axis.auto_range": False,
+            "graph.y_axis.min": 3.5,
+            "graph.y_axis.max": 5,
+            "graph.show_trendline": False,
+            "graph.show_values": False,
+        },
         "sql": """SELECT name, category, crawl_timestamp, overall_score
 FROM vw_app_score_trend
 ORDER BY crawl_timestamp, name;""",
     },
     {
         "name": "Review score trend by application",
-        "description": "Individual review scores over time.",
+        "description": "Weekly average review score for the last 365 days, only weeks with at least 10 reviews.",
         "dashboard": "primary",
-        "sql": """SELECT name, category, review_at, review_score
+        "display": "line",
+        "visualization_settings": {
+            "graph.dimensions": ["review_week", "name"],
+            "graph.metrics": ["avg_score"],
+        },
+        "sql": """SELECT
+    name,
+    date_trunc('week', review_at) AS review_week,
+    AVG(review_score) AS avg_score,
+    COUNT(*) AS review_count
 FROM vw_review_score_trend
-ORDER BY review_at, name;""",
+WHERE review_at >= NOW() - INTERVAL '365 days'
+GROUP BY name, date_trunc('week', review_at)
+HAVING COUNT(*) >= 10
+ORDER BY review_week, name;""",
     },
     {
         "name": "Installs trend",
-        "description": "Minimum installs reported by Play Store per crawl observation.",
+        "description": "Maximum reported minimum installs per application, on a log scale bar chart.",
         "dashboard": "primary",
-        "sql": """SELECT name, category, crawl_timestamp, min_installs
+        "display": "bar",
+        "visualization_settings": {
+            "graph.dimensions": ["name"],
+            "graph.metrics": ["min_installs"],
+            "graph.y_axis.scale": "log",
+            "graph.y_axis.auto_range": False,
+            "graph.y_axis.min": 1000,
+            "graph.y_axis.max": 10000000,
+        },
+        "sql": """SELECT
+    name,
+    MAX(min_installs) AS min_installs
 FROM vw_install_trend
-ORDER BY crawl_timestamp, name;""",
+GROUP BY name
+ORDER BY min_installs DESC;""",
     },
     {
         "name": "Messaging apps network stability",
         "description": "Network stability indicators for messaging applications.",
         "dashboard": "primary",
+        "display": "table",
+        "visualization_settings": {},
         "sql": """SELECT name, scenario, avg_handshake_rtt_ms, retransmissions,
 zero_window_events, tcp_reset_drops, avg_overhead_ratio, avg_network_risk_index
 FROM vw_messaging_network
@@ -37,81 +73,180 @@ ORDER BY avg_network_risk_index NULLS LAST;""",
         "name": "Latest app business snapshot",
         "description": "Latest product, review and network indicators in one table.",
         "dashboard": "primary",
+        "display": "table",
+        "visualization_settings": {
+            "table.columns": [
+                {"name": "application_id", "enabled": False},
+                {"name": "name", "enabled": True},
+                {"name": "package_name", "enabled": True},
+                {"name": "category", "enabled": True},
+                {"name": "min_installs", "enabled": True},
+                {"name": "latest_score", "enabled": True},
+                {"name": "ratings", "enabled": True},
+                {"name": "reviews", "enabled": True},
+                {"name": "crawl_timestamp", "enabled": True},
+                {"name": "all_time_review_score", "enabled": True},
+                {"name": "all_time_review_count", "enabled": True},
+                {"name": "recent_review_score", "enabled": True},
+                {"name": "recent_review_count", "enabled": True},
+                {"name": "avg_rtt_ms", "enabled": False},
+                {"name": "avg_overhead_ratio", "enabled": False},
+                {"name": "avg_network_risk", "enabled": False},
+            ],
+            "table.pivot_column": "avg_rtt_ms",
+            "table.cell_column": "min_installs",
+            "table.column_formatting": [
+                {
+                    "id": 0,
+                    "type": "range",
+                    "operator": "=",
+                    "columns": ["latest_score"],
+                    "colors": ["#ED6E6E", "#FFFFFF", "#84BB4C"],
+                    "min_type": "custom",
+                    "min_value": 2.9,
+                    "max_type": None,
+                    "max_value": 100,
+                    "highlight_row": False,
+                }
+            ],
+        },
         "sql": """SELECT *
 FROM vw_app_business_snapshot
 ORDER BY latest_score DESC NULLS LAST;""",
     },
     {
-        "name": "Apps with rating-review divergence",
-        "description": "Find apps where Play Store aggregate score differs from stored review scores (all-time and last 30 days).",
+        "name": "Messaging apps — Combo comparison",
+        "description": "Compare RTT, zero-window events, TCP resets and overhead for messaging apps across upload and download scenarios.",
         "dashboard": "primary",
-        "sql": """SELECT name, category,
-       latest_score,
-       all_time_review_score,
-       recent_review_score,
-       ROUND((latest_score - all_time_review_score)::numeric, 2) AS gap_vs_all_time,
-       ROUND((latest_score - recent_review_score)::numeric, 2) AS gap_vs_recent
+        "display": "combo",
+        "visualization_settings": {
+            "graph.dimensions": ["name"],
+            "graph.metrics": ["zero_window", "rst", "rtt_ms", "overhead_x1000"],
+        },
+        "sql": """SELECT name, scenario,
+       avg_handshake_rtt_ms AS rtt_ms,
+       zero_window_events AS zero_window,
+       tcp_reset_drops AS rst,
+       avg_overhead_ratio * 1000 AS overhead_x1000
+FROM vw_messaging_network
+ORDER BY avg_network_risk_index DESC NULLS LAST;""",
+    },
+    {
+        "name": "Apps with rating review divergence",
+        "description": "Compare Play Store aggregate score with the last 30 days review score and label the divergence.",
+        "dashboard": "primary",
+        "display": "table",
+        "visualization_settings": {
+            "table.pivot_column": "status",
+            "table.cell_column": "latest_score",
+            "column_settings": {
+                "[\"name\",\"gap\"]": {"show_mini_bar": True}
+            },
+        },
+        "sql": """SELECT
+    name,
+    category,
+    latest_score,
+    all_time_review_score,
+    recent_review_score,
+    ROUND((latest_score - recent_review_score)::numeric, 2) AS gap,
+    CASE
+        WHEN latest_score - recent_review_score > 0.3 THEN 'Play Store overrates'
+        WHEN latest_score - recent_review_score < -0.3 THEN 'Reviews more positive'
+        ELSE 'In sync'
+    END AS status
 FROM vw_app_business_snapshot
 WHERE latest_score IS NOT NULL
-  AND (all_time_review_score IS NOT NULL OR recent_review_score IS NOT NULL)
-ORDER BY GREATEST(
-    ABS(COALESCE(latest_score - all_time_review_score, 0)),
-    ABS(COALESCE(latest_score - recent_review_score, 0))
-) DESC;""",
+  AND recent_review_score IS NOT NULL
+ORDER BY ABS(latest_score - recent_review_score) DESC;""",
     },
     {
-        "name": "Most engaged reviews",
-        "description": "Reviews receiving the most thumbs-up.",
-        "dashboard": "secondary",
-        "sql": """SELECT a.name, a.category, r.review_at, r.score,
-       r.thumbs_up_count, r.content
-FROM app_reviews r
-JOIN applications a ON a.id = r.application_id
-ORDER BY r.thumbs_up_count DESC NULLS LAST
-LIMIT 100;""",
-    },
-    {
-        "name": "Network overhead by scenario",
-        "description": "Compare transferred bytes, payload and overhead by network scenario.",
-        "dashboard": "secondary",
-        "sql": """SELECT name, category, scenario,
-       AVG(total_transferred_bytes) AS avg_transferred_bytes,
-       AVG(total_payload_bytes) AS avg_payload_bytes,
-       AVG(overhead_ratio) AS avg_overhead_ratio
-FROM vw_network_quality
-GROUP BY name, category, scenario
-ORDER BY avg_overhead_ratio DESC NULLS LAST;""",
-    },
-    {
-        "name": "Apps with rising or falling installs",
-        "description": "Compare each app's first and latest observed minimum installs.",
+        "name": "Popularity vs quality matrix",
+        "description": "Classify apps by install count (popularity) and latest score (quality) to reveal apps that are installed a lot but rated poorly.",
         "dashboard": "primary",
+        "display": "table",
+        "visualization_settings": {},
         "sql": """WITH ranked AS (
-  SELECT *,
-         ROW_NUMBER() OVER (
-           PARTITION BY application_id
-           ORDER BY crawl_timestamp, min_installs
-         ) AS rn_first,
-         ROW_NUMBER() OVER (
-           PARTITION BY application_id
-           ORDER BY crawl_timestamp DESC, min_installs DESC
-         ) AS rn_last
-  FROM vw_install_trend
-),
-firsts AS (
-  SELECT application_id, name, category, min_installs AS first_installs
-  FROM ranked WHERE rn_first = 1
-),
-lasts AS (
-  SELECT application_id, min_installs AS latest_installs
-  FROM ranked WHERE rn_last = 1
+    SELECT
+        name,
+        category,
+        min_installs,
+        latest_score,
+        CASE
+            WHEN min_installs >= 1000000000 THEN 'High Popularity'
+            WHEN min_installs >= 10000000  THEN 'Medium Popularity'
+            ELSE 'Low Popularity'
+        END AS popularity_band,
+        CASE
+            WHEN latest_score >= 4.5 THEN 'High Quality'
+            WHEN latest_score >= 3.5 THEN 'Medium Quality'
+            WHEN latest_score IS NOT NULL THEN 'Low Quality'
+            ELSE 'Unknown'
+        END AS quality_band
+    FROM vw_app_business_snapshot
+    WHERE min_installs IS NOT NULL
+      AND latest_score IS NOT NULL
 )
-SELECT f.name, f.category, f.first_installs, l.latest_installs,
-       (l.latest_installs - f.first_installs) AS install_change,
-       CASE WHEN f.first_installs > 0
-            THEN ROUND(100.0 * (l.latest_installs - f.first_installs) / f.first_installs, 2)
-            ELSE NULL END AS install_change_pct
-FROM firsts f JOIN lasts l USING (application_id)
-ORDER BY install_change_pct DESC NULLS LAST;""",
+SELECT
+    name,
+    category,
+    min_installs,
+    latest_score,
+    popularity_band,
+    quality_band,
+    (popularity_band = 'High Popularity' AND quality_band = 'Low Quality') AS popularity_quality_mismatch
+FROM ranked
+ORDER BY popularity_quality_mismatch DESC, min_installs DESC;""",
+    },
+    {
+        "name": "Average score of last 100 reviews",
+        "description": "Average score of the most recent 100 reviews for each application; apps with fewer than 100 reviews use all stored reviews.",
+        "dashboard": "primary",
+        "display": "bar",
+        "visualization_settings": {
+            "graph.dimensions": ["name"],
+            "graph.metrics": ["avg_last_100_score"],
+            "graph.y_axis.auto_range": False,
+            "graph.y_axis.min": 1,
+            "graph.y_axis.max": 5,
+        },
+        "sql": """WITH ranked_reviews AS (
+    SELECT
+        name,
+        score,
+        ROW_NUMBER() OVER (
+            PARTITION BY name
+            ORDER BY review_at DESC NULLS LAST
+        ) AS rn
+    FROM vw_review_score_trend
+    WHERE score IS NOT NULL
+)
+SELECT
+    name,
+    ROUND(AVG(score)::numeric, 2) AS avg_last_100_score,
+    COUNT(*) AS reviews_used
+FROM ranked_reviews
+WHERE rn <= 100
+GROUP BY name
+ORDER BY avg_last_100_score DESC NULLS LAST;""",
+    },
+    {
+        "name": "Review volume per application (3-hour buckets)",
+        "description": "Number of reviews written by users in 3-hour buckets over time, per application.",
+        "dashboard": "primary",
+        "display": "line",
+        "visualization_settings": {
+            "graph.dimensions": ["review_bucket", "name"],
+            "graph.metrics": ["review_count"],
+        },
+        "sql": """SELECT
+    name,
+    date_trunc('hour', review_at) +
+        INTERVAL '3 hour' * FLOOR(EXTRACT(HOUR FROM review_at)::int / 3) AS review_bucket,
+    COUNT(*) AS review_count
+FROM vw_review_score_trend
+WHERE review_at IS NOT NULL
+GROUP BY name, review_bucket
+ORDER BY review_bucket, name;""",
     },
 ]

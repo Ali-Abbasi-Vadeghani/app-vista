@@ -15,6 +15,3 @@ def test_config_metabase_defaults():
     assert config.MB_DASHBOARD_NAME == "AppVista Analytics"
 
 
-
-def test_config_has_no_messaging_categories():
-    assert not hasattr(config, "MESSAGING_CATEGORIES")

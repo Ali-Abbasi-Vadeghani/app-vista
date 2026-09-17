@@ -1,3 +1,4 @@
+
 import re
 
 import pytest
@@ -46,12 +47,9 @@ def test_primary_questions_include_required_analyses():
     assert "Messaging apps network stability" in names
 
 
-def test_secondary_questions_are_off_dashboard():
-    secondary = {
-        q["name"] for q in QUESTIONS if q.get("dashboard") == "secondary"
-    }
-    assert "Most engaged reviews" in secondary
-    assert "Network overhead by scenario" in secondary
+def test_all_questions_are_on_dashboard():
+    primary = [q for q in QUESTIONS if q.get("dashboard") == "primary"]
+    assert len(primary) == len(QUESTIONS)
 
 
 KNOWN_SOURCES = {
@@ -86,11 +84,18 @@ def _extract_references(sql: str) -> set[str]:
     return refs
 
 
+def _normalize_sql(sql: str) -> str:
+    sql = re.sub(r"'[^']*'", "''", sql)
+    sql = re.sub(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^()]*\)", r"\1()", sql)
+    return sql
+
+
 def test_questions_reference_known_views():
-    cte_names = {"ranked", "firsts", "lasts"}
+    cte_names = {"ranked", "ranked_reviews", "firsts", "lasts"}
 
     for q in QUESTIONS:
-        refs = _extract_references(q["sql"]) - cte_names
+        normalized = _normalize_sql(q["sql"])
+        refs = _extract_references(normalized) - cte_names
         unknown = refs - KNOWN_SOURCES
         assert not unknown, (
             f"Unknown source(s) {unknown} in question '{q['name']}'"
@@ -100,5 +105,3 @@ def test_questions_reference_known_views():
 def test_no_legacy_network_risk_score_reference():
     for q in QUESTIONS:
         assert "network_risk_score" not in q["sql"], q["name"]
-
-

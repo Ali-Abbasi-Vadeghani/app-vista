@@ -9,7 +9,7 @@ os.environ.setdefault("APP_DB", "appvista_db")
 os.environ.setdefault("METABASE_DB", "metabase_db")
 os.environ.setdefault("MB_URL", "http://metabase:3000")
 os.environ.setdefault("MB_ADMIN_EMAIL", "admin@appvista.local")
-os.environ.setdefault("MB_ADMIN_PASSWORD", "ChangeMe123!")
+os.environ.setdefault("MB_ADMIN_PASSWORD", "AppVista-Str0ng-2026!")
 
 import pytest
 from unittest.mock import MagicMock

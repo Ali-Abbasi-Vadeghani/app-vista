@@ -76,8 +76,18 @@ class MetabaseClient:
         return self._create_instance()
 
     def _create_instance(self) -> str:
+        try:
+            props_response = requests.get(
+                f"{self.base_url}/api/session/properties",
+                timeout=self.timeout,
+            )
+            props = props_response.json()
+            setup_token = props.get("setup-token")
+        except requests.RequestException:
+            setup_token = None
+
         payload = {
-            "token": None,
+            "token": setup_token,
             "user": {
                 "email": config.MB_ADMIN_EMAIL,
                 "first_name": config.MB_ADMIN_FIRST_NAME,
@@ -98,7 +108,7 @@ class MetabaseClient:
             return self.session_id
 
         logger.info("Setup failed; retrying login (concurrent bootstrap)")
-
+        
         response = requests.post(
             f"{self.base_url}/api/session",
             json={
@@ -110,6 +120,7 @@ class MetabaseClient:
         response.raise_for_status()
         self.session_id = response.json()["id"]
         return self.session_id
+
 
     def list_databases(self) -> list[dict]:
         response = self._request("GET", "/api/database")

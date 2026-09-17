@@ -1,8 +1,4 @@
--- metabase/analytics.sql
 
--- AppVista analytical layer.
--- These are read-only views consumed by Metabase.
--- No crawler/storage service depends on these views.
 
 CREATE OR REPLACE VIEW vw_app_catalog AS
 SELECT

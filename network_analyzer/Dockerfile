@@ -17,7 +17,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
 COPY tests/ ./tests/
-COPY create_tables.py .
 
 EXPOSE 8010
 

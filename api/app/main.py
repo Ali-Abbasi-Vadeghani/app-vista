@@ -25,7 +25,7 @@ app = FastAPI(
 )
 
 
-@app.get("/")
+@app.get("/")   
 def root():
     return {"message": "AppVista API is running"}
 

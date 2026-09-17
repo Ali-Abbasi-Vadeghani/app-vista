@@ -14,4 +14,4 @@ COPY tests/ ./tests/
 COPY create_tables.py .
 COPY main.py .
 
-CMD ["python", "main.py"]
+CMD ["sh", "-c", "python create_tables.py && python main.py"]

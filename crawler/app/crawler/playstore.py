@@ -3,7 +3,6 @@ import http.client
 import logging
 import os
 import random
-import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -73,11 +72,8 @@ class PlayStoreCrawler:
         return random.choice(self.healthy_proxies)
 
     def _install_proxy(self, proxy: str) -> None:
-        proxy_handler = urllib.request.ProxyHandler(
-            {"http": proxy, "https": proxy}
-        )
-        opener = urllib.request.build_opener(proxy_handler)
-        urllib.request.install_opener(opener)
+        os.environ["HTTP_PROXY"] = proxy
+        os.environ["HTTPS_PROXY"] = proxy
 
     @retry(
         retry=retry_if_exception_type(
